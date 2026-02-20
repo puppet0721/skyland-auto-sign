@@ -1,0 +1,70 @@
+name: Repository Keep Alive
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 每天 UTC 00:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Keep repository alive (every 30 days)
+        env:
+          META_FILE: ".github/.keepalive_timestamp"
+          MIN_DAYS: "30"
+        run: |
+          set -euo pipefail
+
+          now_ts=$(date +%s)
+          now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # 读取上次时间
+          if [ -f "$META_FILE" ]; then
+            last_iso=$(cat "$META_FILE" || echo "")
+          else
+            last_iso=""
+          fi
+
+          # 计算间隔
+          if [ -z "$last_iso" ]; then
+            days_since=$MIN_DAYS
+          else
+            last_ts=$(date -d "$last_iso" +%s 2>/dev/null || echo 0)
+            if [ "$last_ts" -eq 0 ]; then
+              days_since=$MIN_DAYS
+            else
+              days_since=$(( (now_ts - last_ts) / 86400 ))
+            fi
+          fi
+
+          echo "Days since last update: $days_since"
+
+          if [ "$days_since" -lt "$MIN_DAYS" ]; then
+            echo "No need to update."
+            exit 0
+          fi
+
+          echo "$now_iso" > "$META_FILE"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$META_FILE"
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: keep-alive $now_iso"
+          git push
